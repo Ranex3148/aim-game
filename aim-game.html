@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<title>CS2-Style Aim Trainer — Silüet Hedefler</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+:root{
+  --bg1:#0f2027;
+  --bg2:#203a43;
+  --accent:#ff6b6b;
+  --bonus:#ffd54d;
+  --hit:#66bb6a;
+}
+html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:linear-gradient(120deg,var(--bg1),var(--bg2));color:#fff}
+.wrap{max-width:1100px;margin:18px auto;padding:14px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:20px}
+.controls{display:flex;gap:8px;align-items:center}
+.btn{background:linear-gradient(90deg,#3b82f6,#06b6d4);border:none;padding:8px 12px;border-radius:8px;color:#fff;cursor:pointer}
+.btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.12)}
+.panel{margin-top:14px;background:rgba(255,255,255,0.03);padding:12px;border-radius:12px}
+.top-stats{display:flex;gap:12px;flex-wrap:wrap}
+.stat{padding:8px 12px;background:rgba(0,0,0,0.25);border-radius:8px}
+.game-area{margin-top:12px;position:relative;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));height:640px}
+canvas{display:block;width:100%;height:100%}
+.crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;width:48px;height:48px}
+.crosshair:before,.crosshair:after{content:"";position:absolute;background:var(--accent);border-radius:2px}
+.crosshair:before{left:50%;top:0;transform:translateX(-50%);width:4px;height:100%}
+.crosshair:after{top:50%;left:0;transform:translateY(-50%);height:4px;width:100%}
+.muzzle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:8px;height:36px;border-radius:6px;background:radial-gradient(circle,#ffd6a5,#ff6b6b);opacity:0;pointer-events:none}
+label{font-size:13px;color:rgba(255,255,255,0.9)}
+input[type=range]{accent-color:var(--accent)}
+@media (max-width:900px){ .game-area{height:520px } .crosshair{width:36px;height:36px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>CS2-Style Aim Trainer — Silüet Hedefler</h1>
+    <div class="controls">
+      <button class="btn" id="startBtn">Başlat</button>
+      <button class="btn secondary" id="resetBtn">Sıfırla</button>
+      <select id="modeSelect" class="btn secondary">
+        <option value="timed">Zamanlı (60s)</option>
+        <option value="count">Hedef Sayısı</option>
+      </select>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="top-stats">
+      <div class="stat">Puan: <span id="score">0</span></div>
+      <div class="stat">Vuruş: <span id="hits">0</span></div>
+      <div class="stat">Isabet: <span id="acc">0%</span></div>
+      <div class="stat">Zaman: <span id="time">60</span>s</div>
+      <div class="stat">Mermi: <span id="ammo">30</span></div>
+      <div class="stat">Highscore: <span id="hs">0</span></div>
+    </div>
+
+    <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <label>Zorluk:
+        <select id="difficulty"><option value="easy">Kolay</option><option value="medium" selected>Orta</option><option value="hard">Zor</option></select>
+      </label>
+      <label>Silah:
+        <select id="weapon"><option value="pistol">Pistol</option><option value="rifle">Rifle</option></select>
+      </label>
+      <label>Hedef Boyutu: <input id="sizeRange" type="range" min="36" max="96" value="60"></label>
+      <label>Ses: <input type="checkbox" id="soundToggle" checked></label>
+      <div style="margin-left:auto;color:rgba(255,255,255,0.8);font-size:13px">Hedefler insan silüeti — şiddet içermez.</div>
+    </div>
+  </div>
+
+  <div class="game-area" id="gameArea">
+    <canvas id="canvas"></canvas>
+    <div class="crosshair" id="crosshair"></div>
+    <div class="muzzle" id="muzzle"></div>
+  </div>
+</div>
+
+<!-- Sesler -->
+<audio id="shot" src="https://www.soundjay.com/button/sounds/button-16.mp3" preload="auto"></audio>
+<audio id="hit" src="https://www.soundjay.com/button/sounds/button-4.mp3" preload="auto"></audio>
+<audio id="reload" src="https://www.soundjay.com/button/sounds/button-09.mp3" preload="auto"></audio>
+<audio id="empty" src="https://www.soundjay.com/button/sounds/button-10.mp3" preload="auto"></audio>
+
+<script>
+// --- CANVAS SETUP ---
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const gameArea = document.getElementById('gameArea');
+const cross = document.getElementById('crosshair');
+const muzzle = document.getElementById('muzzle');
+
+let W=0,H=0;
+function resize(){ W = gameArea.clientWidth; H = gameArea.clientHeight; canvas.width = W; canvas.height = H; }
+window.addEventListener('resize',resize);
+resize();
+
+// --- DOM refs ---
+const startBtn = document.getElementById('startBtn');
+const resetBtn = document.getElementById('resetBtn');
+const modeSelect = document.getElementById('modeSelect');
+const difficulty = document.getElementById('difficulty');
+const weaponSel = document.getElementById('weapon');
+const sizeRange = document.getElementById('sizeRange');
+const soundToggle = document.getElementById('soundToggle');
+const scoreEl = document.getElementById('score');
+const hitsEl = document.getElementById('hits');
+const accEl = document.getElementById('acc');
+const timeEl = document.getElementById('time');
+const ammoEl = document.getElementById('ammo');
+const hsEl = document.getElementById('hs');
+
+const shotSound = document.getElementById('shot');
+const hitSound = document.getElementById('hit');
+const reloadSound = document.getElementById('reload');
+const emptySound = document.getElementById('empty');
+
+// --- STATE ---
+let running=false, score=0, hits=0, shots=0, timeLeft=60, intervalId=null;
+let ammo=30, maxAmmo=30, fireCooldown=0;
+let targets=[];
+let lastTime = performance.now();
+let pointerX=W/2, pointerY=H/2;
+
+// --- weapons ---
+const weapons = {
+  pistol:{mag:30, rate:0.18, recoil:0.9},
+  rifle:{mag:20, rate:0.09, recoil:1.6}
+};
+
+// --- highscore / leaderboard ---
+let highscore = parseInt(localStorage.getItem('aim_hs')||0,10);
+hsEl.innerText = highscore;
+
+// --- pointer follow ---
+function movePointer(e){
+  const rect = canvas.getBoundingClientRect();
+  const p = e.touches && e.touches[0]? e.touches[0]: e;
+  pointerX = p.clientX - rect.left;
+  pointerY = p.clientY - rect.top;
+  cross.style.left = pointerX + 'px';
+  cross.style.top = pointerY + 'px';
+  muzzle.style.left = pointerX + 'px';
+  muzzle.style.top = pointerY + 'px';
+}
+gameArea.addEventListener('mousemove', movePointer);
+gameArea.addEventListener('touchmove', e=>{ e.preventDefault(); movePointer(e); },{passive:false});
+
+// --- SILHOUETTE TARGET CLASS ---
+class Silhouette{
+  constructor(size,type='static'){
+    this.size=size; this.type=type;
+    this.w = this.size; this.h = this.size*1.9;
+    this.x=Math.random()*(W-this.w-20)+10;
+    this.y=Math.random()*(H-this.h-20)+10;
+    this.vx = (Math.random()-0.5)*(type==='moving'?120:0);
+    this.vy = (Math.random()-0.5)*(type==='moving'?120:0);
+    this.alive=true; this.hit=false; this.hitTimer=0; this.opacity=1; this.rotation=0;
+    this.timer=(type==='disappear'||type==='bonus')?1.6+Math.random()*1.6:0;
+    this.color = (type==='bonus')? 'var(--bonus)' : 'var(--hit)';
+    this.points = (type==='bonus')? 3:1;
+  }
+  update(dt){
+    if(this.hit){ this.hitTimer+=dt; this.y+=80*dt; this.rotation+=2.5*dt; this.opacity = Math.max(0,1-this.hitTimer/1.2); if(this.hitTimer>1.2) this.alive=false; return; }
+    if(this.type==='moving'||this.type==='bonus'){ this.x+=this.vx*dt; this.y+=this.vy*dt; if(this.x<6){ this.x=6; this.vx*=-1;} if(this.y<6){this.y=6;this.vy*=-1;} if(this.x+this.w>W-6){this.x=W-this.w-6;this.vx*=-1;} if(this.y+this.h>H-6){this.y=H-this.h-6;this.vy*=-1;} }
+    if(this.type==='disappear'||this.type==='bonus'){ this.timer-=dt; if(this.timer<=0)this.alive=false; }
+  }
+  draw(ctx){
+    ctx.save(); ctx.globalAlpha=this.opacity;
+    ctx.translate(this.x+this.w/2,this.y+this.h/2);
+    ctx.rotate(this.rotation);
+    ctx.translate(-(this.x+this.w/2),-(this.y+this.h/2));
+    const cx=this.x+this.w/2, headR=this.size*0.22;
+    ctx.beginPath(); ctx.fillStyle=this.color; ctx.arc(cx,this.y+headR+6,headR,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(this.x+6,this.y+headR*2+12); ctx.lineTo(this.x+this.w-6,this.y+headR*2+12); ctx.lineTo(this.x+this.w-6,this.y+this.h-30); ctx.lineTo(this.x+6,this.y+this.h-30); ctx.closePath(); ctx.fill();
+    ctx.fillRect(this.x-6,this.y+headR*2+18,8,this.h*0.45); ctx.fillRect(this.x+this.w-2,this.y+headR*2+18,8,this.h*0.45);
+    ctx.fillRect(this.x+8,this.y+this.h-36,this.w*0.28,36); ctx.fillRect(this.x+this.w-8-(this.w*0.28),this.y+this.h-36,this.w*0.28,36);
+    ctx.lineWidth=2; ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.stroke();
+    ctx.restore();
+  }
+  contains(px,py){ const cx=this.x+this.w/2, cy=this.y+this.h*0.35; const r=Math.max(this.w,this.h)*0.42; const dx=px-cx,dy=py-cy; return dx*dx+dy*dy<=r*r; }
+  onHit(){ this.hit=true; this.hitTimer=0; }
+}
+
+// --- SPAWN LOGIC ---
+function spawnTarget(){
+  const diff = difficulty.value;
+  let type='static';
+  const rnd=Math.random();
+  if(rnd<0.12) type='bonus'; else if(rnd<0.36) type='moving'; else if(rnd<0.48) type='disappear';
+  let size=parseInt(sizeRange.value,10);
+  if(diff==='easy') size*=1.25; if(diff==='hard') size*=0.8;
+  targets.push(new Silhouette(size,type));
+  const caps={easy:3,medium:5,hard:7}; while(targets.length>caps[diff]) targets.shift();
+}
+
+// spawn periodic
+let spawnTimer=0;
+
+// --- UPDATE & RENDER LOOP ---
+function updateAndRender(now){
+  const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now;
+  if(fireCooldown>0) fireCooldown=Math.max(0,fireCooldown-dt);
+  ctx.clearRect(0,0,W,H);
+  for(const t of targets) t.update(dt);
+  targets = targets.filter(t=>t.alive);
+  spawnTimer+=dt; if(spawnTimer>0.5){ spawnTimer=0; if(running) spawnTarget(); }
+  for(const t of targets) t.draw(ctx);
+  requestAnimationFrame(updateAndRender);
+}
+requestAnimationFrame(updateAndRender);
+
+// --- SHOOTING ---
+function shootAt(px,py){
+  if(fireCooldown>0) return;
+  if(ammo<=0){ playSound(emptySound); return; }
+  fireCooldown=weapons[weaponSel.value].rate;
+  ammo--; ammoEl.innerText=ammo; shots++;
+  muzzle.style.opacity=1; muzzle.style.transform='translate(-50%,-50%) scale(1.2)'; setTimeout(()=>{ muzzle.style.opacity=0; muzzle.style.transform='translate(-50%,-50%) scale(1)';},90);
+  playSound(shotSound);
+  cross.style.transform='translate(-50%,-50%) scale(1.25) rotate('+(Math.random()*8-4)+'deg)';
+  setTimeout(()=>{ cross.style.transform='translate(-50%,-50%) scale(1) rotate(0deg)';},80);
+  for(let i=targets.length-1;i>=0;i--){ const t=targets[i]; if(t.contains(px,py)&&!t.hit){ t.onHit(); score+=t.points; hits++; playSound(hitSound); return; } }
+}
+
+// mouse & touch
+gameArea.addEventListener('mousedown',e=>{ if(!running) return; const rect=canvas.getBoundingClientRect(); shootAt(e.clientX-rect.left,e.clientY-rect.top);});
+gameArea.addEventListener('touchstart',e=>{ if(!running) return; e.preventDefault(); const rect=canvas.getBoundingClientRect(); const p=e.touches[0]; shootAt(p.clientX-rect.left,p.clientY-rect.top);},{passive:false});
+
+// keyboard reload
+document.addEventListener('keydown',e=>{ if(e.key==='r'||e.key==='R') reload();});
+
+// reload
+function reload(){ ammo = weapons[weaponSel.value].mag; ammoEl.innerText=ammo; playSound(reloadSound); }
+
+// start game
+function startGame(){
+  running=true; score=hits=shots=0; ammo=weapons[weaponSel.value].mag; ammoEl.innerText=ammo; targets=[];
+  timeLeft=(modeSelect.value==='timed')?60:9999; timeEl.innerText=(modeSelect.value==='timed')?60:'—';
+  for(let i=0;i<3;i++) spawnTarget();
+  clearInterval(intervalId);
+  if(modeSelect.value==='timed'){ intervalId=setInterval(()=>{ timeLeft--; timeEl.innerText=timeLeft; if(timeLeft<=0) endGame(); },1000);}
+  updateHUD();
+}
+
+// end game
+function endGame(){
+  running=false; clearInterval(intervalId);
+  if(score>highscore){ highscore=score; localStorage.setItem('aim_hs',String(highscore)); hsEl.innerText=highscore; }
+  setTimeout(()=>{ alert(`Oyun Bitti!\nPuan: ${score}\nIsabet: ${hits}/${shots} (${shots?Math.round(hits/shots*100):0}%)`); },100);
+}
+
+// HUD update
+function updateHUD(){
+  scoreEl.innerText=score; hitsEl.innerText=hits; accEl.innerText=shots===0?'0%':Math.round(hits/shots*100)+'%'; ammoEl.innerText=ammo; hsEl.innerText=highscore;
+  requestAnimationFrame(updateHUD);
+}
+
+// UI wiring
+startBtn.addEventListener('click',startGame);
+resetBtn.addEventListener('click',()=>{
+  running=false; clearInterval(intervalId); targets=[]; score=hits=shots=0; timeLeft=60;
+  ammo = weapons[weaponSel.value].mag; ammoEl.innerText=ammo; timeEl.innerText=(modeSelect.value==='timed')?60:'—';
+  updateHUD();
+});
+weaponSel.addEventListener('change',()=>{ ammo = weapons[weaponSel.value].mag; ammoEl.innerText=ammo;});
+difficulty.addEventListener('change',()=>{});
+window.addEventListener('load',()=>{ resize(); lastTime=performance.now(); });
+
+function playSound(audio){ if(!soundToggle.checked) return; audio.currentTime=0; audio.play().catch(()=>{}); }
+</script>
+</body>
+</html>
